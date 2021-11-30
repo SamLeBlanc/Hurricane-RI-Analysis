@@ -1,0 +1,145 @@
+---
+title: "Visualizing Storm Tracks of Atlantic Storms"
+author: Samuel LeBlanc
+output: html_document
+---
+
+```{r setup, include=FALSE}
+# Set default cell options
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, fig.width=20, fig.height=15)
+```
+
+```{r}
+library(ggmap)
+library(ggplot2)
+library(tidyverse)
+library(repr)
+library(plyr)
+library(dplyr)
+library(RColorBrewer)
+```
+
+```{r}
+# Read in storm track segment data written to csv in Python
+df_track = read.csv('Storm_Track_Segments.csv')
+
+# Create map background using stamen maps, use toner-lite theme
+map = get_stamenmap(c(left = -100, bottom = 7.5, right = -50, top = 32.5), maptype = "toner-lite",zoom = 5)
+
+# Limit track data to single storm or year
+df_track = df_track %>% filter(Code == 'AL092017')
+
+# Create supplemental data frames used for mapping
+df_6hr = df_track %>% filter(Hour %% 6 == 0)
+df_24hr = df_track %>% filter(Hour == 0)
+df_RI = df_track %>% filter(Rapid_NHC24 == 'True')
+```
+
+```{r}
+# Create color scale (currently Red-Yellow-Blue)
+col = rev(brewer.pal(n=length(df_track$Wind),"RdYlBu"))
+```
+
+```{r}
+# Create plot theme
+map_theme = theme(
+    plot.title = element_text(hjust = 0.5, size=42, margin=margin(0,0,30,0), face="bold"),
+    axis.text=element_text(size=22),
+    axis.title=element_text(size=28,face="bold"),
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+    legend.title=element_text(size=24,face="bold"),
+    legend.text=element_text(size=18),
+    legend.direction="horizontal",
+    legend.position = c(.87,.92),
+    legend.background = element_rect(fill=alpha('blue', 0)),
+    legend.key.size = unit(2, "cm"),
+    legend.key.height = unit(.6, "cm"),
+    legend.spacing.x = unit(0.5, 'cm'),
+    legend.title.align=0.5,
+    legend.key = element_rect(fill = "red")
+)
+```
+
+```{r}
+# Create the breaks/labels for the legend, also needed for correctly coloring best track line segments
+create_label_breaks <- function( Min, Max, Step ) {
+  lis = c()
+  for(i in seq(Min,Max,by=Step) ){
+    lis = append(lis,i)
+  }
+  return (lis)
+}
+```
+
+
+```{r}
+# Create the Best Track Map using ggmap/ggplot
+
+# Args:
+  # leg_title (string): the title to use for legend color bar, usually with units (e.g. Wind Speed (mph) )
+  # columns (string): the name of the column with the data to be colored (e.g. Wind, Pressure, Accel)
+  # Min (float): the minimum value to include in color scale/legend
+  # Max (float): the maximum value to include in color scale/legend
+  # Step (float): the step value between Min and Max to include for color scale/legend
+# Returns:
+  # The prettiest map you ever saw 😜
+
+create_map <- function( leg_title, column, Min, Max, Step ) {
+  
+  # get label/breaks for legend from function defined above
+  label_breaks = create_label_breaks(Min, Max, Step)
+  
+  # Import map background created earlier
+  ggmap(map) +
+  
+  # Create a rectangle to serve as legend background to hide map labels
+  geom_rect(aes(xmin = -70, xmax = -50.01, ymin = 25, ymax = 32.49), alpha = 1, fill = "#d8d8d8")+
+    
+  # Yellow highlight showing where the storm was Rapidly Intensifying (if at all)
+  geom_segment(data = df_RI, aes_string(x = 'Lon1', y = 'Lat1', xend = 'Lon2', yend = 'Lat2'), color='yellow', size = 12, alpha = 1, lineend = "round")+
+  
+  # Black outline around storm track to increase contrast
+  geom_segment(data = df_track, aes_string(x = 'Lon1', y = 'Lat1', xend = 'Lon2', yend = 'Lat2'), color='black', size = 7.5, alpha = 1, lineend = "round")+
+  
+  # Colored best track line segments showing path of hurricane (x,y) and desired attribute (Wind,Pressure,Acceleration) shown using color
+  geom_segment(data = df_track, aes_string(x = 'Lon1', y = 'Lat1', xend = 'Lon2', yend = 'Lat2', color=column), size = 7, alpha = 1, lineend = "round")+
+  
+  # Add time markers showing 6 and 24 intervals (6hr is fainter, 24hr is stronger)
+  geom_point(data = df_6hr, aes(x = Lon1, y = Lat1), alpha=0.35, size = 2,) +
+  geom_point(data = df_24hr, aes(x = Lon1, y = Lat1), alpha=1.00, size = 3.5,) +
+  
+  # Create color scale using gradient function
+  # Note: 'oob = scales::squish' is important! Properly squishes values/colors that exceed limits, lots of time wasted until I used this line
+  scale_colour_gradientn(name = leg_title, colours = col, breaks = label_breaks, labels=label_breaks, limits = c(Min - Step/6, Max + Step/6), oob = scales::squish) +
+  
+  # Create title and axis labels
+  ggtitle('Hurricane Harvey (2017)') + labs(x = "Longitude", y="Latitude")+
+  
+  # Add labels to legend identifying RI and Time Intervals
+  geom_label(data=df_track, aes( x=-56.5, y=28.3, label=' Rapidly Intensifying '),color="black", fill = "yellow", size=6.5 , fontface="bold", label.size = NA )+
+  geom_label(data=df_track, aes( x=-56.5, y=26.9, label=' Time Intervals:  ◦ 6hr   ● 24hr '), fill = "#dbdbdb", size=6.5 , fontface="bold", label.size = NA )+
+  
+  # Add theme created earlier
+  map_theme +
+    
+  # Add guides because I can't add this into theme for some reason?
+  guides(colour = guide_colorbar(title.position = "top"))
+}
+```
+
+```{r}
+# Create maps for Pressure, Wind Speed, and Wind Acceleration
+
+create_map('Pressure (mbar)','Pressure',
+           round_any(min(df_track$Pressure), 20, f = floor),
+           round_any(max(df_track$Pressure), 20, f = ceiling),
+           20)
+
+create_map('Wind Speed (mph)','Wind',
+           round_any(min(df_track$Wind), 20, f = floor),
+           round_any(max(df_track$Wind), 20, f = ceiling),
+           20)
+
+create_map('Wind Acceleration (mph/h)','Accel',-3,3,1)
+```
+
