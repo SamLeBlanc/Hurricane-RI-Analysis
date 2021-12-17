@@ -1,0 +1,1 @@
+Images too large to host on Github. Download them using using provided code in /scripts/, or email sdl87@georgetown.edu for Drop Box.
